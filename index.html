@@ -64,7 +64,7 @@ details>summary{cursor:pointer;font-weight:600}
 <body>
 <header><div class="nav" id="nav"></div></header>
 <main id="app"></main>
-
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <script>
 /* ============ State ============ */
 const LS = 'ielts.v1';
@@ -84,7 +84,9 @@ Honey produced in cities has also attracted attention. Tests in several cities h
     { qtype: 'fill', prompt: 'Heavy metals in urban honey were far below ________ limits.', answer: 'legal' }
   ]
 };
-let S = JSON.parse(localStorage.getItem(LS) || 'null') || { key: '', model: 'gemini-2.5-flash', tests: [DEMO], history: [] };
+let S = JSON.parse(localStorage.getItem(LS) || 'null') || { key: '', model: 'gemini-3.8-flash', tests: [DEMO], history: [], bank: { writing: [], speaking: [] } };
+if (!S.model || /^gemini-2\.5/.test(S.model)) S.model = 'gemini-3.8-flash'; /* model cũ đã ngừng cho người dùng mới */
+S.bank = S.bank || { writing: [], speaking: [] };
 const save = () => localStorage.setItem(LS, JSON.stringify(S));
 let timer = null, cur = {};
 const QL = { tfng: 'True/False/Not Given', ynng: 'Yes/No/Not Given', mcq: 'Multiple choice', fill: 'Điền từ / completion', matching: 'Matching', heading: 'Matching headings', other: 'Khác' };
@@ -126,7 +128,7 @@ const idbDel = async k => { try { const d = await idb(); d.transaction('a', 'rea
 const b64 = f => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result.split(',')[1]); fr.readAsDataURL(f); });
 
 /* ============ Router ============ */
-const VIEWS = { home: ['Trang chủ', home], reading: ['Reading', () => library('reading')], listening: ['Listening', () => library('listening')], writing: ['Writing', writing], speaking: ['Speaking', speaking], history: ['Tiến độ', history], settings: ['Cài đặt', settings] };
+const VIEWS = { home: ['Trang chủ', home], reading: ['Reading', () => library('reading')], listening: ['Listening', () => library('listening')], writing: ['Writing', writing], speaking: ['Speaking', speaking], import: ['Nhập sách', importView], history: ['Tiến độ', history], settings: ['Cài đặt', settings] };
 function go(v) {
   clearInterval(timer); window.speechSynthesis && speechSynthesis.cancel(); cur = {};
   $('#nav').innerHTML = '<span class="brand">IELTS Practice</span>' + Object.entries(VIEWS).map(([k, [n]]) => `<button class="${k === v ? 'on' : ''}" onclick="go('${k}')">${n}</button>`).join('');
@@ -148,19 +150,10 @@ function library(type) {
   const list = S.tests.filter(t => t.type === type);
   app(`<h1>${type === 'reading' ? 'Reading' : 'Listening'}</h1>
   <div class="card"><h3>Bộ đề của bạn</h3>
-  ${list.length ? `<table>${list.map(t => `<tr><td><b>${esc(t.title)}</b><div class="muted">${t.questions.length} câu · ${t.minutes || 60} phút</div></td>
-  <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="runTest('${t.id}')">Làm bài</button> <button class="btn sm ghost" onclick="delTest('${t.id}')">Xoá</button></td></tr>`).join('')}</table>` : '<p class="muted">Chưa có đề. Thêm đề ở bên dưới (chỉ làm một lần cho mỗi đề).</p>'}</div>
+  ${list.length ? `<table>${list.map(t => `<tr><td><b>${esc(t.title)}</b> ${t.review ? '<span class="pill" style="background:rgba(217,102,122,.2)">cần rà đáp án</span>' : ''}${t.type === 'listening' ? (t.parts && t.parts.length ? '<span class="pill">có audio</span>' : '<span class="pill" style="background:rgba(217,102,122,.2)">chưa có audio</span>') : ''}<div class="muted">${t.questions.length} câu · ${t.minutes || 60} phút</div><div id="ed-${t.id}"></div></td>
+  <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="runTest('${t.id}')">Làm bài</button> ${t.type === 'listening' ? `<button class="btn sm ghost" onclick="audioPanel('${t.id}')">Audio</button> ` : ''}<button class="btn sm ghost" onclick="editAnswers('${t.id}')">Đáp án</button> <button class="btn sm ghost" onclick="delTest('${t.id}')">Xoá</button></td></tr>`).join('')}</table>` : '<p class="muted">Chưa có đề. Thêm đề ở bên dưới (chỉ làm một lần cho mỗi đề).</p>'}</div>
 
-  <div class="card"><h3>Thêm đề bằng AI</h3>
-  <p class="muted">Upload PDF/ảnh đề (đáp án nằm trong cùng file hoặc file riêng) hoặc dán text. AI tự chuyển thành đề để chấm tự động. Nên nhập từng đề một (hoặc vài đề) mỗi lần để kết quả chính xác.</p>
-  <label>File đề (PDF/ảnh, chọn nhiều file được)</label><input type="file" id="aif" accept=".pdf,image/*" multiple>
-  <label>Hoặc dán text đề</label><textarea id="ait" style="min-height:80px"></textarea>
-  <label>Đáp án: file riêng hoặc dán text (bỏ trống nếu đã có trong file đề)</label>
-  <input type="file" id="aik" accept=".pdf,image/*" multiple><textarea id="aikt" style="min-height:60px;margin-top:6px" placeholder="vd: 1 TRUE, 2 FALSE, 3 B ..."></textarea>
-  <label>Ghi chú cho AI (tuỳ chọn)</label><input id="ain" placeholder="vd: chỉ lấy Test 2; hoặc: file này là Cambridge 17 Test 1">
-  ${type === 'listening' ? '<label>File audio (nếu đề chỉ có 1 test)</label><input type="file" id="aia" accept="audio/*">' : ''}
-  <div class="row" style="margin-top:12px"><button class="btn" id="aigo" onclick="aiImport('${type}')">Chuyển đổi bằng AI</button></div>
-  <div id="aimsg"></div></div>
+  <div class="card"><h3>Thêm đề mới</h3><p class="muted">Dùng mục <a href="#" onclick="go('import');return false">Nhập sách</a> để nhập nguyên cuốn PDF một lần (chỉ cần khai báo khoảng trang của từng đề). Audio gán bằng nút "Audio" ở từng đề Listening.</p></div>
 
   <div class="card"><h3>Lấy đề chính thức ở đâu?</h3>
   <div class="row"><a class="btn ghost sm" style="text-decoration:none" target="_blank" rel="noopener" href="https://ieltsonlinetests.com">ieltsonlinetests.com</a>
@@ -171,51 +164,134 @@ function library(type) {
   <textarea id="imp" style="margin-top:10px" placeholder='{"title":"...","type":"${type}","minutes":60,"questions":[{"qtype":"tfng","prompt":"...","options":["TRUE","FALSE","NOT GIVEN"],"answer":"TRUE"}]}'></textarea>
   <div class="row" style="margin-top:10px"><button class="btn ghost" onclick="importTest()">Thêm đề</button></div><div id="impmsg"></div></details>`);
 }
-const aimsg = h => { const e = $('#aimsg'); if (e) e.innerHTML = h; };
-
-async function aiImport(type) {
-  const files = [...$('#aif').files, ...$('#aik').files];
-  const text = $('#ait').value.trim(), keyt = $('#aikt').value.trim(), note = $('#ain').value.trim();
-  if (!files.length && !text) { aimsg('<p class="err">Hãy upload file hoặc dán text đề.</p>'); return; }
-  if (files.reduce((s, f) => s + f.size, 0) > 14 * 1024 * 1024) { aimsg('<p class="err">Tổng dung lượng file quá lớn (&gt;14MB). Hãy tách PDF thành từng test nhỏ hơn rồi upload.</p>'); return; }
-  $('#aigo').disabled = true; aimsg('<p class="muted">AI đang đọc đề… có thể mất 1–3 phút, đừng đóng trang.</p>');
+/* ============ Nhập sách (PDF nguyên cuốn) ============ */
+let BOOK = null, IR = [];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function importView() {
+  app(`<h1>Nhập sách</h1>
+  <div class="card"><h3>1. Chọn file PDF sách</h3>
+  <input type="file" id="bk" accept=".pdf" onchange="loadBook(this)">
+  <p class="muted" id="bki">${BOOK ? `<span class="ok">Đang dùng "${esc(BOOK.name)}": ${BOOK.pages} trang.</span>` : 'Chọn nguyên cuốn (đủ 4 kỹ năng). App tự cắt đúng các trang bạn chỉ ra ngay trên máy bạn, nên không lo giới hạn dung lượng.'}</p></div>
+  <div class="card"><h3>2. Khai báo các đề</h3>
+  <p class="muted">Điền <b>số thứ tự trang trong trình xem PDF</b> (trang thứ mấy của file, có thể khác số in trên sách). Ví dụ: <code>14-27</code> hoặc <code>14-18, 25</code>. Đáp án và audioscript thường nằm cuối sách. Để trống "Trang đề" thì dòng đó sẽ bị bỏ qua, nên bạn có thể nhập dần từng đợt.</p>
+  <div class="row" style="margin-bottom:8px"><button class="btn ghost sm" onclick="addRows(true)">+ 4 Listening, 4 Reading, 4 Writing, 4 Speaking</button><button class="btn ghost sm" onclick="addRows()">+ Thêm dòng</button></div>
+  <div style="overflow:auto"><table id="rows"></table></div>
+  <div class="row" style="margin-top:12px"><button class="btn" id="rungo" onclick="runImport()">Nhập tất cả</button><span class="muted">Chạy lần lượt từng đề, mỗi đề khoảng 0,5–2 phút. Đừng đóng trang khi đang chạy.</span></div></div>
+  <div class="card"><h3>3. Kết quả</h3><div id="rlog" class="muted">Chưa chạy.</div></div>`);
+  renderRows(); renderLog();
+}
+function renderRows() {
+  const t = $('#rows'); if (!t) return;
+  t.innerHTML = '<tr><th>Loại</th><th>Tên đề</th><th>Trang đề</th><th>Trang đáp án</th><th>Trang audioscript</th><th></th></tr>' + IR.map((r, i) => `<tr>
+  <td><select onchange="IR[${i}].type=this.value;renderRows()">${['listening', 'reading', 'writing', 'speaking'].map(k => `<option value="${k}" ${r.type === k ? 'selected' : ''}>${k}</option>`).join('')}</select></td>
+  <td><input value="${esc(r.name)}" oninput="IR[${i}].name=this.value" style="min-width:180px"></td>
+  <td><input value="${esc(r.pages)}" oninput="IR[${i}].pages=this.value" placeholder="14-27" style="min-width:90px"></td>
+  <td><input value="${esc(r.ans)}" oninput="IR[${i}].ans=this.value" placeholder="150-152" style="min-width:90px" ${/^(listening|reading)$/.test(r.type) ? '' : 'disabled'}></td>
+  <td><input value="${esc(r.script)}" oninput="IR[${i}].script=this.value" placeholder="170-180" style="min-width:90px" ${r.type === 'listening' ? '' : 'disabled'}></td>
+  <td><button class="btn sm ghost" onclick="IR.splice(${i},1);renderRows()">✕</button></td></tr>`).join('');
+}
+function addRows(quick) {
+  const nm = BOOK ? BOOK.name : 'Sách';
+  if (quick) ['listening', 'reading', 'writing', 'speaking'].forEach(k => [1, 2, 3, 4].forEach(n => IR.push({ type: k, name: `${nm} Test ${n} ${k[0].toUpperCase() + k.slice(1)}`, pages: '', ans: '', script: '' })));
+  else IR.push({ type: 'reading', name: nm + ' Test 1 Reading', pages: '', ans: '', script: '' });
+  renderRows();
+}
+async function loadBook(el) {
+  const f = el.files[0]; if (!f) return; $('#bki').textContent = 'Đang đọc PDF…';
   try {
-    const parts = [];
-    for (const f of files) parts.push({ inline_data: { mime_type: f.type || 'application/pdf', data: await b64(f) } });
-    parts.push({ text: `You convert an IELTS ${type} practice test into JSON for a practice app. Use ONLY the material supplied (attached files and the text below). Never invent passages, questions or answers.
-${note ? 'User note: ' + note + '\n' : ''}${text ? 'Pasted test text:\n"""' + text + '"""\n' : ''}${keyt ? 'Pasted answer key:\n"""' + keyt + '"""\n' : ''}
-The material may contain several tests: return every complete test found unless the user note limits it.
-Return JSON only: {"tests":[{"title":string,"type":"${type}","minutes":${type === 'listening' ? 30 : 60},${type === 'listening' ? '"transcript":string,' : '"passages":[{"title":string,"text":string}],'}"questions":[{"n":number,"qtype":"tfng"|"ynng"|"mcq"|"fill"|"matching"|"heading"|"other","prompt":string,"options":[string],"answer":string}]}]}
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    const doc = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+    BOOK = { name: f.name.replace(/\.pdf$/i, ''), doc, pages: doc.getPageCount() };
+    $('#bki').innerHTML = `<span class="ok">Đã đọc "${esc(BOOK.name)}": ${BOOK.pages} trang.</span>`;
+  } catch (e) { BOOK = null; $('#bki').innerHTML = `<span class="err">Không đọc được PDF: ${esc(e.message)}. Nếu là lỗi PDFLib, kiểm tra kết nối mạng (thư viện tải từ CDN).</span>`; }
+}
+function parseRange(str, max) {
+  const out = [];
+  for (const part of String(str).split(',').map(x => x.trim()).filter(Boolean)) {
+    const m = part.match(/^(\d+)\s*[-–]\s*(\d+)$/) || part.match(/^(\d+)$/);
+    if (!m) throw new Error('Khoảng trang không hợp lệ: "' + part + '"');
+    const a = +m[1], b = +(m[2] || m[1]);
+    if (a < 1 || b < a || b > max) throw new Error(`Trang "${part}" nằm ngoài sách (1–${max}).`);
+    for (let p = a; p <= b; p++) out.push(p - 1);
+  }
+  if (!out.length) throw new Error('Chưa có trang nào.');
+  return out;
+}
+async function extractPages(idxs) {
+  const out = await PDFLib.PDFDocument.create();
+  const pgs = await out.copyPages(BOOK.doc, idxs); pgs.forEach(p => out.addPage(p));
+  return await out.save();
+}
+const u8b64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+function renderLog() {
+  const el = $('#rlog'); if (!el) return;
+  const rows = IR.filter(r => r.status);
+  el.innerHTML = rows.length ? rows.map(r => `<div style="margin:4px 0">${r.status === 'ok' ? '<span class="ok">✓</span>' : r.status === 'run' ? '⏳' : '<span class="bad">✗</span>'} <b>${esc(r.name)}</b> <span class="muted">${r.status === 'err' ? esc(r.err || '') : r.status === 'ok' ? esc(r.note || '') : 'đang xử lý…'}</span></div>`).join('') : 'Chưa chạy.';
+}
+async function runImport() {
+  if (!BOOK) { $('#rlog').innerHTML = '<span class="err">Hãy chọn file PDF sách ở bước 1.</span>'; return; }
+  const rows = IR.filter(r => r.pages.trim() && r.status !== 'ok');
+  if (!rows.length) { $('#rlog').innerHTML = '<span class="err">Chưa có dòng nào điền "Trang đề" (hoặc tất cả đã nhập xong).</span>'; return; }
+  $('#rungo').disabled = true;
+  for (const r of rows) {
+    r.status = 'run'; r.err = ''; renderLog();
+    try { await importOne(r); r.status = 'ok'; } catch (e) { r.status = 'err'; r.err = e.message; }
+    renderLog(); await sleep(1500);
+  }
+  const b = $('#rungo'); if (b) b.disabled = false;
+}
+async function importOne(r) {
+  const files = []; let bytes = 0;
+  const add = async (label, range) => { const u = await extractPages(parseRange(range, BOOK.pages)); bytes += u.length; files.push({ label, u }); return u; };
+  const tp = await add('FILE 1 (test pages)', r.pages);
+  const hasAns = /^(listening|reading)$/.test(r.type) && r.ans.trim();
+  const hasScript = r.type === 'listening' && r.script.trim();
+  if (hasAns) await add('FILE 2 (answer key pages)', r.ans);
+  if (hasScript) await add('FILE 3 (audioscript pages)', r.script);
+  if (bytes > 14 * 1024 * 1024) throw new Error('Các trang đã chọn quá nặng (>14MB, có thể là bản scan độ phân giải cao). Hãy chia nhỏ khoảng trang.');
+  const parts = [];
+  files.forEach(f => parts.push({ text: f.label + ':' }, { inline_data: { mime_type: 'application/pdf', data: u8b64(f.u) } }));
+
+  if (r.type === 'reading' || r.type === 'listening') {
+    parts.push({ text: `You convert ONE IELTS ${r.type} practice test (${r.name}) into JSON for a practice app. Use ONLY the attached PDF pages and never invent passages, questions or answers.${hasAns ? ' FILE 2 is the answer key; it may cover several tests, so use only the entries for this test.' : ' The answer key, if present, is inside FILE 1.'}${hasScript ? ' FILE 3 is the audioscript; it may cover several tests, so use only the part for this test.' : ''}
+Return JSON only: {"test":{"minutes":${r.type === 'listening' ? 30 : 60},${r.type === 'listening' ? '"transcript":string,' : '"passages":[{"title":string,"text":string}],'}"questions":[{"n":number,"qtype":"tfng"|"ynng"|"mcq"|"fill"|"matching"|"heading"|"other","prompt":string,"options":[string],"answer":string}]}}
 Rules:
-- Copy ${type === 'reading' ? 'passages verbatim, including paragraph labels (A, B, C...)' : 'the audioscript/transcript into "transcript" only if it is in the material, otherwise use an empty string'}.
+- ${r.type === 'reading' ? 'Copy passages verbatim, including paragraph labels (A, B, C...).' : 'Put the audioscript of this test into "transcript" if FILE 3 or the pages contain it, otherwise use an empty string.'}
 - One object per question, numbered in order (1..40). "Choose TWO letters" items become two questions with the same options.
 - Matching and heading questions: put the full option list in "options" and the correct option text in "answer".
-- tfng options are exactly ["TRUE","FALSE","NOT GIVEN"]; ynng options are exactly ["YES","NO","NOT GIVEN"]. Omit "options" for fill-in questions; answer holds the exact word(s), with acceptable alternatives separated by |.
-- For gap-fill inside a table, note or summary, include enough surrounding context in "prompt" so the question makes sense alone, and mark the gap with ________.
-- Take answers from the answer key. If an answer cannot be found, set "answer" to "".
+- tfng options are exactly ["TRUE","FALSE","NOT GIVEN"]; ynng options are exactly ["YES","NO","NOT GIVEN"]. Omit "options" for fill-in questions; "answer" holds the exact word(s), with acceptable alternatives separated by |.
+- For gaps inside a table, form, note or summary, include enough surrounding context in "prompt" so the question makes sense alone, and mark the gap with ________.
+- If an answer cannot be found, set "answer" to "".
 - Do not shorten or summarise any text.` });
-    const r = await gem(parts, true, 65000);
-    const tests = (r.tests || []).filter(t => t && Array.isArray(t.questions) && t.questions.length);
-    if (!tests.length) throw new Error('AI không tìm thấy đề hợp lệ trong file. Kiểm tra lại file hoặc ghi chú.');
-    tests.forEach((t, k) => { t.id = 't' + Date.now() + k; t.type = type; t.minutes = t.minutes || (type === 'listening' ? 30 : 60); t.passages = t.passages || []; });
-    cur = { pending: tests, audio: type === 'listening' && $('#aia') ? $('#aia').files[0] : null };
-    renderPreview(type);
-  } catch (e) { aimsg(`<p class="err">Lỗi: ${esc(e.message)}</p>`); }
-  $('#aigo').disabled = false;
-}
-function renderPreview(type) {
-  aimsg(`<h3 style="margin-top:14px">Kiểm tra trước khi lưu</h3><p class="muted">Rà lại đáp án (ô màu xám) và sửa nếu AI đọc sai. Câu thiếu đáp án sẽ không được chấm đúng.</p>` + cur.pending.map((t, ti) => {
+    const o = (await gem(parts, true, 65000)).test;
+    if (!o || !Array.isArray(o.questions) || !o.questions.length) throw new Error('AI không tìm thấy câu hỏi trong các trang này. Kiểm tra lại số trang.');
+    const old = S.tests.find(t => t.title === r.name && t.type === r.type);
+    const t = { id: old ? old.id : 't' + Date.now() + Math.random().toString(36).slice(2, 5), title: r.name, type: r.type, minutes: o.minutes || (r.type === 'listening' ? 30 : 60), passages: o.passages || [], transcript: o.transcript || '', questions: o.questions, review: true, parts: old ? old.parts : undefined };
+    S.tests = S.tests.filter(x => x !== old); S.tests.push(t); save();
     const miss = t.questions.filter(q => !q.answer).length;
-    const words = (t.passages || []).reduce((s, p) => s + (p.text || '').split(/\s+/).length, 0);
-    return `<details open style="margin:10px 0"><summary>${esc(t.title)} · ${t.questions.length} câu${words ? ' · ' + words + ' từ' : ''}${miss ? ` · <span class="bad">${miss} câu thiếu đáp án</span>` : ''}</summary>
-    <table>${t.questions.map((q, qi) => `<tr><td style="width:36px">${q.n || qi + 1}</td><td><span class="muted">${esc(QL[q.qtype] || '')}</span><br>${esc(String(q.prompt).slice(0, 120))}</td><td style="width:220px"><input data-t="${ti}" data-q="${qi}" value="${esc(q.answer)}"></td></tr>`).join('')}</table></details>`;
-  }).join('') + `<div class="row" style="margin-top:12px"><button class="btn" onclick="savePending('${type}')">Lưu vào thư viện</button><button class="btn ghost" onclick="library('${type}')">Huỷ</button></div>`);
-}
-async function savePending(type) {
-  document.querySelectorAll('#aimsg input[data-t]').forEach(i => { cur.pending[+i.dataset.t].questions[+i.dataset.q].answer = i.value.trim(); });
-  cur.pending.forEach(t => S.tests.push(t));
-  if (cur.audio && cur.pending.length === 1) { try { await idbPut(cur.pending[0].id, cur.audio); } catch {} }
-  save(); library(type);
+    r.note = `${t.questions.length} câu${miss ? ', ' + miss + ' câu thiếu đáp án' : ''}. Vào mục ${r.type === 'reading' ? 'Reading' : 'Listening'}, bấm nút "Đáp án" để rà lại.`;
+  } else if (r.type === 'writing') {
+    parts.push({ text: `Extract the IELTS Writing tasks from FILE 1 (Task 1 and Task 2). Copy each task's instruction text verbatim. Return JSON only: {"tasks":[{"task":1|2,"prompt":string,"has_visual":boolean}]}. has_visual is true when Task 1 relies on a chart, table, map or diagram shown as an image.` });
+    const o = await gem(parts);
+    const tasks = (o.tasks || []).filter(x => x && x.prompt);
+    if (!tasks.length) throw new Error('AI không tìm thấy đề Writing trong các trang này.');
+    for (const x of tasks) {
+      const title = `${r.name} · Task ${x.task}`, old = S.bank.writing.find(b => b.title === title);
+      const id = old ? old.id : 'w' + Date.now() + Math.random().toString(36).slice(2, 5);
+      let pdfKey = '';
+      if (x.has_visual) { try { await idbPut('wp:' + id, new Blob([tp], { type: 'application/pdf' })); pdfKey = 'wp:' + id; } catch {} }
+      S.bank.writing = S.bank.writing.filter(b => b !== old); S.bank.writing.push({ id, title, task: x.task, prompt: x.prompt, pdfKey });
+    }
+    save(); r.note = `${tasks.length} đề, chọn ở mục Writing (mục "Từ sách").`;
+  } else {
+    parts.push({ text: `Extract the IELTS Speaking test content from FILE 1 verbatim: all Part 1 questions, the Part 2 cue card (topic plus its bullet lines such as "You should say:" and "and explain ..."), and all Part 3 questions. Return JSON only: {"part1":[string],"part2":{"topic":string,"points":[string]},"part3":[string]}. Use empty arrays or an empty topic if a part is not present. Never invent questions.` });
+    const o = await gem(parts);
+    if (!(o.part1 || []).length && !(o.part3 || []).length && !(o.part2 && o.part2.topic)) throw new Error('AI không tìm thấy câu hỏi Speaking trong các trang này.');
+    const old = S.bank.speaking.find(b => b.title === r.name);
+    S.bank.speaking = S.bank.speaking.filter(b => b !== old);
+    S.bank.speaking.push({ id: old ? old.id : 's' + Date.now() + Math.random().toString(36).slice(2, 5), title: r.name, part1: o.part1 || [], part2: o.part2 || null, part3: o.part3 || [] });
+    save(); r.note = 'đã lưu bộ câu hỏi, chọn ở mục Speaking.';
+  }
 }
 function importTest() {
   try {
@@ -231,20 +307,67 @@ function delTest(id) { if (confirm('Xoá đề này?')) { const t = S.tests.find
 function runTest(id) {
   const t = S.tests.find(x => x.id === id); cur = { t };
   const passages = t.type === 'reading' ? t.passages.map(p => `<h3>${esc(p.title || '')}</h3>${esc(p.text)}`).join('<hr>') : '';
-  const audio = t.type === 'listening' ? `<div class="card"><b>Audio</b>
-    <audio id="au" controls style="width:100%" ${t.audio ? `src="${esc(t.audio)}"` : ''}></audio>
-    <div class="row" style="margin-top:6px"><input type="file" accept="audio/*" style="max-width:260px" onchange="setAudio('${t.id}',this)"><span class="muted" id="aum">Chọn file audio một lần, app sẽ nhớ cho đề này.</span></div></div>` : '';
+  const audio = t.type === 'listening' ? `<div class="card"><b>Audio</b> <span class="muted" id="aum"></span>
+    <div class="row" id="aup" style="margin:6px 0"></div><audio id="au" controls style="width:100%"></audio></div>` : '';
   const qs = t.questions.map((q, i) => `<div class="q"><div><b>${q.n || i + 1}.</b> ${esc(q.prompt)}</div>
     ${q.options ? q.options.map(o => `<label class="opt"><input type="radio" name="q${i}" value="${esc(o)}"><span>${esc(o)}</span></label>`).join('') : `<input class="ans" id="q${i}" autocomplete="off" placeholder="Đáp án">`}</div>`).join('');
   app(`<div class="row" style="justify-content:space-between"><h2>${esc(t.title)}</h2><div class="timer" id="tm"></div></div>${audio}
   <div class="${passages ? 'split' : ''}">${passages ? `<div class="card pass">${passages}</div>` : ''}<div class="card" style="max-height:${passages ? '70vh;overflow:auto' : 'none'}">${qs}</div></div>
   <button class="btn" onclick="submitTest()">Nộp bài</button>`);
   startTimer((t.minutes || 60) * 60, $('#tm'), submitTest);
-  if (t.type === 'listening') idbGet(t.id).then(b => { if (b) { $('#au').src = URL.createObjectURL(b); $('#aum').textContent = 'Đang dùng audio đã lưu cho đề này.'; } }).catch(() => {});
+  if (t.type === 'listening') loadAudio(t);
 }
-async function setAudio(id, el) {
-  const f = el.files[0]; if (!f) return; $('#au').src = URL.createObjectURL(f);
-  try { await idbPut(id, f); $('#aum').textContent = 'Đã lưu audio cho đề này, lần sau không cần chọn lại.'; } catch { $('#aum').textContent = 'Không lưu được audio (trình duyệt hạn chế), vẫn nghe được lần này.'; }
+async function loadAudio(t) {
+  const tr = [];
+  for (const p of (t.parts || [])) { try { const b = await idbGet(t.id + ':' + p); if (b) tr.push({ label: 'Part ' + p, url: URL.createObjectURL(b) }); } catch {} }
+  if (!tr.length) { try { const b = await idbGet(t.id); if (b) tr.push({ label: 'Audio', url: URL.createObjectURL(b) }); } catch {} }
+  if (!tr.length && t.audio) tr.push({ label: 'Audio', url: t.audio });
+  cur.tracks = tr; const au = $('#au'); if (!au) return;
+  if (!tr.length) { $('#aum').innerHTML = '<span class="bad">Chưa có audio. Quay lại danh sách đề và bấm nút Audio để gán.</span>'; return; }
+  const play = i => { cur.ti = i; au.src = tr[i].url; document.querySelectorAll('#aup button').forEach((b, k) => b.className = 'btn sm' + (k === i ? '' : ' ghost')); };
+  $('#aup').innerHTML = tr.map((x, i) => `<button class="btn sm ghost" data-i="${i}">${esc(x.label)}</button>`).join('');
+  document.querySelectorAll('#aup button').forEach(b => b.onclick = () => { play(+b.dataset.i); au.play(); });
+  au.onended = () => { if (cur.ti + 1 < tr.length) { play(cur.ti + 1); au.play(); } };
+  play(0);
+}
+function audioPanel(id) {
+  const t = S.tests.find(x => x.id === id), box = $('#ed-' + id);
+  box.innerHTML = `<div class="card" style="margin-top:8px"><b>Gán audio cho: ${esc(t.title)}</b>
+  <p class="muted">Chọn các file audio của đề này (thường 4 file, mỗi file một Part), hoặc chọn cả folder audio của sách rồi chọn Part cho đúng file. App tự đoán Part theo tên file/tên folder (vd "Test 1", "Part 2"), bạn chỉnh lại nếu sai.</p>
+  <div class="row"><label style="margin:0">File:</label><input type="file" id="apf-${id}" accept="audio/*" multiple style="max-width:260px"><label style="margin:0">Folder:</label><input type="file" id="apd-${id}" webkitdirectory multiple style="max-width:260px"></div><div id="apl-${id}"></div></div>`;
+  const h = el => el.onchange = () => apList(id, [...el.files].filter(f => /^audio\//.test(f.type) || /\.(mp3|m4a|wav|ogg|aac|flac)$/i.test(f.name)));
+  h($('#apf-' + id)); h($('#apd-' + id));
+}
+function guessPart(f, i, few, tn) {
+  const s = f.webkitRelativePath || f.name;
+  const ft = (s.match(/test\s*[_-]?0?(\d+)/i) || [])[1];
+  if (ft && tn && ft !== tn) return '';
+  const pm = s.match(/(?:part|section)\s*[_-]?0?([1-4])/i);
+  if (pm && (ft || few)) return pm[1];
+  return few ? String(i + 1) : '';
+}
+function apList(id, files) {
+  const t = S.tests.find(x => x.id === id), tn = (t.title.match(/test\s*[_-]?0?(\d+)/i) || [])[1];
+  files.sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, undefined, { numeric: true }));
+  cur['ap' + id] = files; const few = files.length <= 4;
+  $('#apl-' + id).innerHTML = files.length ? `<table>${files.map((f, i) => `<tr><td>${esc(f.webkitRelativePath || f.name)}<div class="muted">${(f.size / 1048576).toFixed(1)} MB</div></td><td style="width:120px"><select data-i="${i}"><option value="">Bỏ qua</option>${[1, 2, 3, 4].map(p => `<option value="${p}" ${guessPart(f, i, few, tn) === String(p) ? 'selected' : ''}>Part ${p}</option>`).join('')}</select></td></tr>`).join('')}</table><div class="row" style="margin-top:8px"><button class="btn sm" onclick="saveAudio('${id}')">Lưu audio</button><span id="aps-${id}" class="muted"></span></div>` : '<p class="err">Không thấy file audio nào.</p>';
+}
+async function saveAudio(id) {
+  const t = S.tests.find(x => x.id === id), files = cur['ap' + id] || [], msg = $('#aps-' + id), used = {};
+  for (const s of document.querySelectorAll(`#apl-${id} select`)) { const p = s.value; if (!p) continue; if (used[p]) { msg.innerHTML = `<span class="err">Part ${p} đang được chọn cho 2 file.</span>`; return; } used[p] = files[+s.dataset.i]; }
+  if (!Object.keys(used).length) { msg.innerHTML = '<span class="err">Chưa chọn Part nào.</span>'; return; }
+  msg.textContent = 'Đang lưu…';
+  try { for (const p of Object.keys(used)) await idbPut(id + ':' + p, used[p]); } catch (e) { msg.innerHTML = '<span class="err">Không lưu được audio (trình duyệt hết dung lượng hoặc chặn lưu trữ).</span>'; return; }
+  t.parts = Object.keys(used).map(Number).sort(); save(); library(t.type);
+}
+function editAnswers(id) {
+  const t = S.tests.find(x => x.id === id), box = $('#ed-' + id);
+  box.innerHTML = `<div class="card" style="margin-top:8px"><b>Đáp án – rà lại với sách</b><table>${t.questions.map((q, i) => `<tr><td style="width:34px">${q.n || i + 1}</td><td class="muted">${esc(String(q.prompt).slice(0, 70))}</td><td style="width:200px"><input data-q="${i}" value="${esc(q.answer)}"></td></tr>`).join('')}</table><div class="row" style="margin-top:8px"><button class="btn sm" onclick="saveAnswers('${id}')">Lưu đáp án đã rà</button></div></div>`;
+}
+function saveAnswers(id) {
+  const t = S.tests.find(x => x.id === id);
+  document.querySelectorAll(`#ed-${id} input[data-q]`).forEach(i => { t.questions[+i.dataset.q].answer = i.value.trim(); });
+  t.review = false; save(); library(t.type);
 }
 function submitTest() {
   clearInterval(timer); const t = cur.t; if (!t || cur.done) return; cur.done = true;
@@ -307,14 +430,14 @@ function writing() {
 }
 function wtChange() {
   const t = $('#wt').value;
-  $('#wp').innerHTML = (t === '2' ? W2.map((p, i) => `<option value="${i}">Gợi ý ${i + 1}: ${esc(p.slice(0, 60))}…</option>`).join('') : '') + '<option value="custom">Đề của tôi (tự dán)</option>';
+  $('#wp').innerHTML = (t === '2' ? W2.map((p, i) => `<option value="${i}">Gợi ý ${i + 1}: ${esc(p.slice(0, 60))}…</option>`).join('') : '') + S.bank.writing.filter(x => String(x.task) === t).map(x => `<option value="b:${x.id}">Từ sách: ${esc(x.title)}</option>`).join('') + '<option value="custom">Đề của tôi (tự dán)</option>';
   $('#wimgbox').style.display = t === '1' ? 'block' : 'none'; wpChange();
 }
-function wpChange() { const v = $('#wp').value; $('#wq').value = v === 'custom' ? '' : W2[+v]; }
+function wpChange() { const v = $('#wp').value; cur.wb = null; if (v === 'custom') $('#wq').value = ''; else if (v.startsWith('b:')) { cur.wb = S.bank.writing.find(x => 'b:' + x.id === v); $('#wq').value = cur.wb ? cur.wb.prompt : ''; } else $('#wq').value = W2[+v]; }
 function wcount() { const n = ($('#wa').value.trim().match(/\S+/g) || []).length; $('#wc').textContent = n + ' từ'; }
 function openEssay(i) {
   const h = S.history[i]; go('writing');
-  $('#wt').value = h.task || '2'; wtChange(); $('#wp').value = 'custom'; $('#wq').value = h.prompt || ''; $('#wa').value = h.essay || ''; wcount();
+  $('#wt').value = h.task || '2'; wtChange(); $('#wp').value = 'custom'; cur.wb = null; $('#wq').value = h.prompt || ''; $('#wa').value = h.essay || ''; wcount();
   $('#wres').innerHTML = '<div class="card muted">Đã mở lại bài cũ. Sửa bài rồi bấm "Nộp & chấm" để so sánh điểm.</div>';
 }
 async function gradeWriting() {
@@ -325,9 +448,10 @@ async function gradeWriting() {
     const parts = [];
     const f = $('#wimg') && $('#wimg').files[0];
     if (f && task === '1') parts.push({ inline_data: { mime_type: f.type, data: await b64(f) } });
+    if (cur.wb && cur.wb.pdfKey && task === '1') { try { const pb = await idbGet(cur.wb.pdfKey); if (pb) parts.push({ inline_data: { mime_type: 'application/pdf', data: await b64(pb) } }); } catch {} }
     parts.push({ text: `You are a strict, experienced IELTS Academic Writing examiner. Grade this Task ${task} response using the official public band descriptors (${task === '1' ? 'Task Achievement' : 'Task Response'}, Coherence & Cohesion, Lexical Resource, Grammatical Range & Accuracy). Be realistic and do not inflate scores; the candidate targets band 7.0-7.5. Penalise under-length answers (${task === '1' ? '<150' : '<250'} words).
 Question: ${q}
-Word count: ${ans.split(/\s+/).length}
+${parts.length ? 'The attached file(s) contain the Task 1 visual (chart, table, map or diagram) that the candidate describes.\n' : ''}Word count: ${ans.split(/\s+/).length}
 Response:
 """${ans}"""
 Return JSON only: {"task":number,"coherence":number,"lexical":number,"grammar":number,"overall":number,"strengths":[string],"weaknesses":[string],"corrections":[{"original":string,"fix":string,"why":string}],"upgraded_paragraph":string,"advice":[string]}. Bands in 0.5 steps. Write strengths, weaknesses, why and advice in Vietnamese; keep corrections' original/fix and upgraded_paragraph in English (upgraded_paragraph = rewrite of the candidate's weakest paragraph at band 8).` });
@@ -350,7 +474,7 @@ function speak(text) { if (!window.speechSynthesis) return; speechSynthesis.canc
 function speaking() {
   app(`<h1>Speaking</h1><div class="card"><p>AI đóng vai giám khảo và hỏi bằng giọng nói. Bạn trả lời bằng micro, app chuyển thành chữ rồi AI chấm.</p>
   ${SR ? '' : '<p class="err">Trình duyệt này không hỗ trợ nhận giọng nói. Hãy dùng Chrome hoặc Edge (bạn vẫn có thể gõ câu trả lời).</p>'}
-  <div class="row"><div style="flex:1;min-width:200px"><label>Phạm vi luyện</label><select id="sp-mode"><option value="full">Đủ 3 part (khoảng 11–14 phút)</option><option value="1">Chỉ Part 1</option><option value="2">Chỉ Part 2</option><option value="3">Chỉ Part 3</option></select></div>
+  <div class="row"><div style="flex:2;min-width:240px"><label>Nguồn câu hỏi</label><select id="sp-src"><option value="ai">AI tạo mới (theo chủ đề bên dưới)</option>${S.bank.speaking.map(x => `<option value="b:${x.id}">Từ sách: ${esc(x.title)}</option>`).join('')}</select></div><div style="flex:1;min-width:200px"><label>Phạm vi luyện</label><select id="sp-mode"><option value="full">Đủ 3 part (khoảng 11–14 phút)</option><option value="1">Chỉ Part 1</option><option value="2">Chỉ Part 2</option><option value="3">Chỉ Part 3</option></select></div>
   <div style="flex:2;min-width:240px"><label>Chủ đề (tuỳ chọn)</label><input id="sp-topic" placeholder="vd: hometown, technology… (trống = ngẫu nhiên)"></div></div>
   <div class="row" style="margin-top:12px"><button class="btn" id="sp-go" onclick="startSpeaking()">Bắt đầu</button></div></div><div id="sp"></div>`);
 }
@@ -358,12 +482,13 @@ async function startSpeaking() {
   $('#sp-go').disabled = true; $('#sp').innerHTML = '<div class="card">Đang chuẩn bị câu hỏi…</div>';
   try {
     const topic = $('#sp-topic').value.trim(), mode = $('#sp-mode').value;
-    const r = await gem([{ text: `Act as an IELTS Speaking examiner. Write an original practice set${topic ? ' loosely around the theme: ' + topic : ''} for a candidate aiming at band 7-7.5.
+    let r; const src = $('#sp-src').value; if (src.startsWith('b:')) r = S.bank.speaking.find(x => 'b:' + x.id === src); else r = await gem([{ text: `Act as an IELTS Speaking examiner. Write an original practice set${topic ? ' loosely around the theme: ' + topic : ''} for a candidate aiming at band 7-7.5.
 Return JSON only: {"part1":[4 short everyday questions on 1-2 familiar topics],"part2":{"topic":"Describe ...","points":["You should say:","...","...","...","and explain ..."]},"part3":[4 abstract discussion questions linked to the Part 2 topic]}` }]);
     const items = [];
-    if (mode === 'full' || mode === '1') r.part1.forEach(q => items.push({ part: 1, q }));
-    if (mode === 'full' || mode === '2') items.push({ part: 2, q: r.part2.topic, points: r.part2.points });
-    if (mode === 'full' || mode === '3') r.part3.forEach(q => items.push({ part: 3, q }));
+    if (mode === 'full' || mode === '1') (r.part1 || []).forEach(q => items.push({ part: 1, q }));
+    if ((mode === 'full' || mode === '2') && r.part2 && r.part2.topic) items.push({ part: 2, q: r.part2.topic, points: r.part2.points || [] });
+    if (mode === 'full' || mode === '3') (r.part3 || []).forEach(q => items.push({ part: 3, q }));
+    if (!items.length) throw new Error('Đề này không có câu hỏi cho phần bạn chọn.');
     cur = { items, i: 0, ans: [], mode }; askNext();
   } catch (e) { $('#sp').innerHTML = `<div class="card err">Lỗi: ${esc(e.message)}</div>`; $('#sp-go').disabled = false; }
 }
@@ -445,7 +570,7 @@ function settings() {
 }
 async function testKey() { S.key = $('#k').value.trim(); S.model = $('#m').value.trim(); save(); $('#km').textContent = 'Đang thử…'; try { await gem([{ text: 'Reply with the word OK' }], false, 64); $('#km').innerHTML = '<p class="ok">Kết nối thành công.</p>'; } catch (e) { $('#km').innerHTML = `<p class="err">${esc(e.message)}</p>`; } }
 function exportData() { const d = { ...S, key: '' }; const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(d, null, 1)], { type: 'application/json' })); a.download = 'ielts-backup.json'; a.click(); }
-function importData(el) { const f = el.files[0]; if (!f) return; f.text().then(t => { try { const d = JSON.parse(t); S = { ...S, tests: d.tests || S.tests, history: d.history || S.history }; save(); alert('Đã khôi phục.'); go('home'); } catch { alert('File không hợp lệ.'); } }); }
+function importData(el) { const f = el.files[0]; if (!f) return; f.text().then(t => { try { const d = JSON.parse(t); S = { ...S, tests: d.tests || S.tests, history: d.history || S.history, bank: d.bank || S.bank }; save(); alert('Đã khôi phục.'); go('home'); } catch { alert('File không hợp lệ.'); } }); }
 
 go('home');
 </script>
