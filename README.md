@@ -13,15 +13,19 @@ Không có key hay dữ liệu cá nhân trong code. Đề và audio chỉ lưu 
 ## Thiết lập một lần
 
 1. **Cài đặt:** dán Gemini API key (https://aistudio.google.com/apikey), bấm "Thử kết nối". Mỗi thiết bị nhập một lần.
-2. **Nhập sách:** vào mục *Nhập sách*, chọn PDF nguyên cuốn, bấm "+ 4 Listening, 4 Reading, 4 Writing, 4 Speaking", điền khoảng trang cho từng dòng (số trang theo trình xem PDF, ví dụ `14-27`; đáp án và audioscript thường ở cuối sách), rồi bấm "Nhập tất cả". Có thể nhập dần từng đợt, dòng nào để trống "Trang đề" sẽ bị bỏ qua.
-3. **Rà đáp án:** đề mới nhập có nhãn "cần rà đáp án". Mở Reading hoặc Listening, bấm nút "Đáp án", so với sách và sửa nếu AI đọc sai, rồi lưu.
-4. **Audio Listening:** ở danh sách đề Listening, bấm "Audio", chọn các file hoặc cả folder audio của sách, chỉnh Part cho đúng (app tự đoán theo tên file/folder), bấm "Lưu audio". App lưu audio trong trình duyệt nên không phải chọn lại.
+2. **Nhập sách:** vào mục *Nhập sách*, chọn PDF nguyên cuốn, chọn folder audio, bấm **Tự động nhập cả sách**. AI tự tìm trang của từng đề (Listening, Reading, Writing, Speaking), trang đáp án và audioscript, nhập toàn bộ rồi gán audio. Không phải điền số trang. Quá trình mất khoảng 15–30 phút, để tab mở.
+3. **Rà đáp án:** đề Reading/Listening mới nhập có nhãn "cần rà đáp án". Bấm nút "Đáp án", so với sách, sửa nếu AI đọc sai rồi lưu.
+4. **Kiểm tra audio:** mở thử một đề Listening, xem Part 1–4 đã đúng chưa. Đề nào chưa khớp thì bấm nút "Audio" của đề đó để chọn tay.
 5. **Sao lưu:** Cài đặt → Xuất file định kỳ. File xuất gồm đề và lịch sử, không gồm API key và audio.
+
+## Khi quét sai
+
+Mục "Nâng cấp" trong *Nhập sách* hiện số trang AI tìm được cho từng đề. Có thể sửa tay rồi bấm "Nhập các dòng chưa xong". Nút "Chỉ quét" cho phép xem trước số trang mà chưa nhập.
 
 ## Lưu ý
 
 - Cần mạng khi dùng lần đầu vì thư viện cắt PDF (pdf-lib) tải từ CDN.
 - Writing Task 1 từ sách: app lưu các trang chứa biểu đồ và gửi kèm khi chấm.
 - Speaking từ sách dùng thẳng câu hỏi trong sách, không tốn lượt gọi AI để tạo câu.
+- Audio tự khớp theo tên file/folder (Test 1, Part 2...). Nếu file chỉ tên "Track 01...", app chỉ tự gán khi số file đúng bằng 4 lần số đề.
 - Điểm AI chỉ mang tính tham khảo, có thể lệch khoảng 0.5 band. Pronunciation chỉ là ước lượng từ transcript.
-- Bảng quy đổi band Reading/Listening theo bảng Academic phổ biến; đề không đủ 40 câu sẽ được scale về 40.

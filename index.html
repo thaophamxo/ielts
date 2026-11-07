@@ -167,18 +167,127 @@ function library(type) {
 /* ============ Nhập sách (PDF nguyên cuốn) ============ */
 let BOOK = null, IR = [];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+let AUDIO_FILES = null;
 function importView() {
   app(`<h1>Nhập sách</h1>
-  <div class="card"><h3>1. Chọn file PDF sách</h3>
+  <p class="muted">Chỉ cần chọn PDF sách và folder audio, rồi bấm một nút. AI tự tìm trang của từng đề, đáp án và audioscript, nhập toàn bộ và gán audio. Bạn không phải điền số trang.</p>
+  <div class="card"><h3>1. Chọn file PDF sách (nguyên cuốn)</h3>
   <input type="file" id="bk" accept=".pdf" onchange="loadBook(this)">
-  <p class="muted" id="bki">${BOOK ? `<span class="ok">Đang dùng "${esc(BOOK.name)}": ${BOOK.pages} trang.</span>` : 'Chọn nguyên cuốn (đủ 4 kỹ năng). App tự cắt đúng các trang bạn chỉ ra ngay trên máy bạn, nên không lo giới hạn dung lượng.'}</p></div>
-  <div class="card"><h3>2. Khai báo các đề</h3>
-  <p class="muted">Điền <b>số thứ tự trang trong trình xem PDF</b> (trang thứ mấy của file, có thể khác số in trên sách). Ví dụ: <code>14-27</code> hoặc <code>14-18, 25</code>. Đáp án và audioscript thường nằm cuối sách. Để trống "Trang đề" thì dòng đó sẽ bị bỏ qua, nên bạn có thể nhập dần từng đợt.</p>
-  <div class="row" style="margin-bottom:8px"><button class="btn ghost sm" onclick="addRows(true)">+ 4 Listening, 4 Reading, 4 Writing, 4 Speaking</button><button class="btn ghost sm" onclick="addRows()">+ Thêm dòng</button></div>
+  <p class="muted" id="bki">${BOOK ? `<span class="ok">Đang dùng "${esc(BOOK.name)}": ${BOOK.pages} trang.</span>` : 'File được xử lý ngay trên máy bạn, không giới hạn dung lượng.'}</p></div>
+  <div class="card"><h3>2. Chọn folder audio của sách (tuỳ chọn)</h3>
+  <input type="file" webkitdirectory multiple onchange="pickAudioFolder(this)">
+  <p class="muted" id="aui">${AUDIO_FILES ? `<span class="ok">Đã chọn ${AUDIO_FILES.length} file audio.</span>` : 'App tự đoán đề và Part theo tên file/folder (Test 1, Part 2...). Chọn xong, audio được gán ngay sau khi nhập đề.'}</p></div>
+  <div class="card"><h3>3. Bắt đầu</h3>
+  <div class="row"><button class="btn" id="autogo" onclick="autoImport()">Tự động nhập cả sách</button><button class="btn ghost" id="scango" onclick="scanOnly()">Chỉ quét, để tôi xem số trang trước</button></div>
+  <p class="muted" style="margin-top:8px">Quét và nhập cả cuốn thường mất khoảng 15–30 phút (nhiều lượt gọi AI). Cứ để tab mở và làm việc khác.</p>
+  <div id="slog" class="muted"></div></div>
+  <div class="card"><h3>Kết quả</h3><div id="rlog" class="muted">Chưa chạy.</div><div id="alog" style="margin-top:8px"></div></div>
+  <details class="card"><summary>Nâng cấp: xem hoặc chỉnh số trang, nhập lại dòng lỗi</summary>
+  <p class="muted">Sau khi quét, bảng này hiện số trang AI tìm được. Có thể sửa tay nếu AI nhận sai, rồi bấm "Nhập các dòng chưa xong".</p>
   <div style="overflow:auto"><table id="rows"></table></div>
-  <div class="row" style="margin-top:12px"><button class="btn" id="rungo" onclick="runImport()">Nhập tất cả</button><span class="muted">Chạy lần lượt từng đề, mỗi đề khoảng 0,5–2 phút. Đừng đóng trang khi đang chạy.</span></div></div>
-  <div class="card"><h3>3. Kết quả</h3><div id="rlog" class="muted">Chưa chạy.</div></div>`);
+  <div class="row" style="margin-top:10px"><button class="btn ghost" id="rungo" onclick="runImport()">Nhập các dòng chưa xong</button><button class="btn ghost sm" onclick="addRows()">+ Thêm dòng</button></div></details>`);
   renderRows(); renderLog();
+}
+const RNG = ps => {
+  ps = [...new Set(ps)].sort((a, b) => a - b); const out = []; let a = ps[0], b = a;
+  for (const p of ps.slice(1)) { if (p <= b + 3) b = p; else { out.push(a === b ? '' + a : a + '-' + b); a = b = p; } }
+  out.push(a === b ? '' + a : a + '-' + b); return out.join(', ');
+};
+function buildRows(labels, bookName) {
+  const by = {};
+  labels.forEach((l, i) => {
+    if (!l || l.k === 'X') return;
+    (Array.isArray(l.t) ? l.t : [l.t]).forEach(t => { t = +t; if (!t) return; (by[l.k + t] = by[l.k + t] || []).push(i + 1); });
+  });
+  const kinds = { L: 'listening', R: 'reading', W: 'writing', S: 'speaking' }, rows = [];
+  Object.entries(kinds).forEach(([k, type]) => {
+    const nums = [...new Set(Object.keys(by).filter(x => x[0] === k).map(x => +x.slice(1)))].sort((a, b) => a - b);
+    nums.forEach(n => rows.push({
+      type, name: `${bookName} Test ${n} ${type[0].toUpperCase() + type.slice(1)}`, pages: RNG(by[k + n]),
+      ans: (type === 'listening' || type === 'reading') && by['A' + n] ? RNG(by['A' + n]) : '',
+      script: type === 'listening' && by['T' + n] ? RNG(by['T' + n]) : ''
+    }));
+  });
+  return rows;
+}
+async function scanBook() {
+  const n = BOOK.pages, labels = new Array(n).fill(null), slog = h => { const e = $('#slog'); if (e) e.innerHTML = h; };
+  const idxs = (a, b) => Array.from({ length: b - a }, (_, i) => a + i);
+  let start = 0, prev = null;
+  while (start < n) {
+    let end = Math.min(start + 25, n), u;
+    for (;;) { u = await extractPages(idxs(start, end)); if (u.length <= 12 * 1024 * 1024 || end - start <= 1) break; end = start + Math.max(1, Math.floor((end - start) / 2)); }
+    slog(`Đang quét trang ${start + 1}–${end} / ${n}…`);
+    const prompt = `You are indexing a printed IELTS practice book (Cambridge style). The attached PDF has ${end - start} pages; number them 1..${end - start} in order. For EACH page return what it contains.
+Kinds: "L" = Listening test pages (question pages of Part/Section 1-4), "R" = Reading test pages (passages and questions), "W" = Writing test pages, "S" = Speaking test pages (Part 1/2/3 questions or cue cards), "A" = answer key pages, "T" = audioscript/transcript pages, "X" = anything else (cover, contents, introduction, tips, sample answers, blank).
+"t" = the test number (integer) the page belongs to; null for kind X. If a page continues a test without printing its number, carry the number from the previous page.${prev ? ` The page just before this chunk was kind ${prev.k}, test ${JSON.stringify(prev.t)}.` : ''}
+For "A" and "T" pages that contain several tests, give "t" as an array of all test numbers on that page.
+Return JSON only: {"pages":[{"p":1,"k":"L","t":1}]} with exactly one entry per page.`;
+    let r;
+    for (let tr = 0; ; tr++) {
+      try { r = await gem([{ inline_data: { mime_type: 'application/pdf', data: u8b64(u) } }, { text: prompt }], true, 8192); break; }
+      catch (e) { if (tr >= 1) throw e; slog('Lỗi tạm thời, thử lại…'); await sleep(5000); }
+    }
+    (r.pages || []).forEach(x => { const i = start + (+x.p) - 1; if (i >= start && i < end) labels[i] = { k: 'LRWSATX'.includes(x.k) ? x.k : 'X', t: x.t }; });
+    for (let i = end - 1; i >= start; i--) if (labels[i]) { prev = labels[i]; break; }
+    start = end; await sleep(800);
+  }
+  IR = buildRows(labels, BOOK.name).map(r => ({ ...r, status: '' }));
+  const cnt = t => IR.filter(r => r.type === t).length;
+  slog(IR.length ? `<span class="ok">Đã quét xong.</span> Tìm thấy: Listening ${cnt('listening')}, Reading ${cnt('reading')}, Writing ${cnt('writing')}, Speaking ${cnt('speaking')} đề.` : '<span class="err">Không tìm thấy đề nào trong sách. Có thể file không phải sách luyện thi hoặc quá mờ.</span>');
+  renderRows();
+}
+async function scanOnly() {
+  if (!BOOK) { $('#slog').innerHTML = '<span class="err">Hãy chọn file PDF sách ở bước 1.</span>'; return; }
+  $('#autogo').disabled = true; $('#scango').disabled = true;
+  try { await scanBook(); const d = document.querySelector('details.card'); if (d) d.open = true; } catch (e) { $('#slog').innerHTML = `<span class="err">Lỗi khi quét: ${esc(e.message)}</span>`; }
+  const a = $('#autogo'), b = $('#scango'); if (a) a.disabled = false; if (b) b.disabled = false;
+}
+async function autoImport() {
+  if (!BOOK) { $('#slog').innerHTML = '<span class="err">Hãy chọn file PDF sách ở bước 1.</span>'; return; }
+  $('#autogo').disabled = true; $('#scango').disabled = true;
+  try { await scanBook(); } catch (e) { $('#slog').innerHTML = `<span class="err">Lỗi khi quét: ${esc(e.message)}</span>`; $('#autogo').disabled = false; $('#scango').disabled = false; return; }
+  if (IR.some(r => r.pages)) await runImport();
+  const a = $('#autogo'), b = $('#scango'); if (a) a.disabled = false; if (b) b.disabled = false;
+}
+function matchAudio(files, tests) {
+  const path = f => f.webkitRelativePath || f.name;
+  files = files.slice().sort((a, b) => path(a).localeCompare(path(b), undefined, { numeric: true }));
+  const tnum = f => { const m = path(f).match(/test\s*[_-]?0?(\d+)/i); return m ? +m[1] : 0; };
+  const anyNum = files.some(tnum), assign = {}, unmatched = [];
+  tests.forEach((x, idx) => {
+    const map = {};
+    if (anyNum) {
+      const mine = files.filter(f => tnum(f) === x.n);
+      mine.forEach(f => { const m = path(f).match(/(?:part|section)\s*[_-]?0?([1-4])/i); if (m && !map[m[1]]) map[m[1]] = f; });
+      if (!Object.keys(map).length && mine.length >= 1 && mine.length <= 4) mine.forEach((f, i) => { map[i + 1] = f; });
+    } else if (files.length === tests.length * 4) { for (let i = 0; i < 4; i++) map[i + 1] = files[idx * 4 + i]; }
+    else if (files.length === tests.length) map[1] = files[idx];
+    if (Object.keys(map).length) assign[x.id] = map; else unmatched.push(x.n);
+  });
+  return { assign, unmatched };
+}
+function pickAudioFolder(el) {
+  AUDIO_FILES = [...el.files].filter(f => /^audio\//.test(f.type) || /\.(mp3|m4a|wav|ogg|aac|flac)$/i.test(f.name));
+  $('#aui').innerHTML = AUDIO_FILES.length ? `<span class="ok">Đã chọn ${AUDIO_FILES.length} file audio.</span> Sẽ tự gán cho các đề Listening.` : '<span class="err">Không thấy file audio trong folder.</span>';
+  if (AUDIO_FILES.length && S.tests.some(t => t.type === 'listening' && t.id !== 'demo-1')) bulkAudio();
+}
+async function bulkAudio() {
+  const out = $('#alog'), say = h => { const e = $('#alog'); if (e) e.innerHTML = h; };
+  const tests = S.tests.filter(t => t.type === 'listening' && t.id !== 'demo-1').map(t => ({ t, id: t.id, n: +((t.title.match(/test\s*[_-]?0?(\d+)/i) || [])[1] || 0) })).filter(x => x.n).sort((a, b) => a.n - b.n);
+  if (!tests.length) { say('<span class="muted">Chưa có đề Listening nào để gán audio.</span>'); return; }
+  say('Đang gán audio…');
+  const { assign, unmatched } = matchAudio(AUDIO_FILES, tests);
+  const lines = [];
+  try {
+    for (const x of tests) {
+      const map = assign[x.id]; if (!map) continue;
+      for (const [p, f] of Object.entries(map)) await idbPut(x.id + ':' + p, f);
+      x.t.parts = Object.keys(map).map(Number).sort(); save();
+      lines.push(`<div><span class="ok">✓</span> Test ${x.n}: ${Object.keys(map).sort().map(p => `Part ${p} ← ${esc(map[p].name)}`).join(', ')}</div>`);
+    }
+  } catch (e) { say(`<span class="err">Không lưu được audio: trình duyệt hết dung lượng hoặc chặn lưu trữ.</span>`); return; }
+  say(`<b>Gán audio:</b>${lines.join('')}${unmatched.length ? `<div class="bad">Chưa khớp được audio cho Test ${unmatched.join(', ')}. Vào mục Listening, bấm nút "Audio" của đề đó để chọn tay.</div>` : ''}<div class="muted">Hãy mở thử một đề Listening để kiểm tra đúng Part.</div>`);
 }
 function renderRows() {
   const t = $('#rows'); if (!t) return;
@@ -239,6 +348,7 @@ async function runImport() {
     renderLog(); await sleep(1500);
   }
   const b = $('#rungo'); if (b) b.disabled = false;
+  if (AUDIO_FILES && AUDIO_FILES.length) await bulkAudio();
 }
 async function importOne(r) {
   const files = []; let bytes = 0;
@@ -253,7 +363,7 @@ async function importOne(r) {
   files.forEach(f => parts.push({ text: f.label + ':' }, { inline_data: { mime_type: 'application/pdf', data: u8b64(f.u) } }));
 
   if (r.type === 'reading' || r.type === 'listening') {
-    parts.push({ text: `You convert ONE IELTS ${r.type} practice test (${r.name}) into JSON for a practice app. Use ONLY the attached PDF pages and never invent passages, questions or answers.${hasAns ? ' FILE 2 is the answer key; it may cover several tests, so use only the entries for this test.' : ' The answer key, if present, is inside FILE 1.'}${hasScript ? ' FILE 3 is the audioscript; it may cover several tests, so use only the part for this test.' : ''}
+    parts.push({ text: `You convert ONE IELTS ${r.type} practice test (${r.name}) into JSON for a practice app. Use ONLY the attached PDF pages and never invent passages, questions or answers.${hasAns ? ' FILE 2 is the answer key; it may cover several tests and both Listening and Reading, so use only the ' + r.type + ' answers for this test.' : ' The answer key, if present, is inside FILE 1.'}${hasScript ? ' FILE 3 is the audioscript; it may cover several tests, so use only the part for this test.' : ''}
 Return JSON only: {"test":{"minutes":${r.type === 'listening' ? 30 : 60},${r.type === 'listening' ? '"transcript":string,' : '"passages":[{"title":string,"text":string}],'}"questions":[{"n":number,"qtype":"tfng"|"ynng"|"mcq"|"fill"|"matching"|"heading"|"other","prompt":string,"options":[string],"answer":string}]}}
 Rules:
 - ${r.type === 'reading' ? 'Copy passages verbatim, including paragraph labels (A, B, C...).' : 'Put the audioscript of this test into "transcript" if FILE 3 or the pages contain it, otherwise use an empty string.'}
